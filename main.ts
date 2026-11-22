@@ -4,8 +4,8 @@ import { join } from 'node:path';
 // Tiny stack VM: 32-bit wrapping ints, 256-value data stack, 64-deep call
 // stack, 256 words of memory, byte input, capped output, 1M step limit.
 function run(p, q) {
-  const s = [], c = [], m = new Int32Array(256), o = [];
-  let ip = 0, pc = 0, n = 0;
+  const s = [], c = [], m = new Int32Array(256), ob = Buffer.alloc(65536);
+  let ip = 0, pc = 0, n = 0, ol = 0;
   const pop = () => { if (!s.length) throw 2; return s.pop(); };
   const push = v => { if (s.length > 255) throw 3; s.push(v | 0); };
   try {
@@ -19,13 +19,12 @@ function run(p, q) {
         if (pc + L > p.length) throw 9;
         im = op === 1 ? p[pc + 1] : op === 2 ? p.readInt32LE(pc + 1) : p[pc + 1] | (p[pc + 2] << 8);
         if (op === 1 && im > 127) im -= 256;
-      } else if (!(op < 8 || (op > 15 && op < 31) || (op > 31 && op < 35) ||
-          (op > 47 && op < 53) || (op > 63 && op < 66) || (op > 79 && op < 84))) throw 5;
+      }
       const sg = im > 32767 ? im - 65536 : im;
       n++;
       pc += L;
       switch (op) {
-        case 0: return [Buffer.from(o), 0];
+        case 0: return [ob.subarray(0, ol), 0];
         case 1: case 2: push(im); break;
         case 3: pop(); break;
         case 4: { const a = pop(); push(a); push(a); break; }
@@ -57,15 +56,16 @@ function run(p, q) {
         case 52: if (!c.length) throw 8; pc = c.pop(); break;
         case 64: { const a = pop(); if (a < 0 || a > 255) throw 6; push(m[a]); break; }
         case 65: { const a = pop(), v = pop(); if (a < 0 || a > 255) throw 6; m[a] = v; break; }
-        case 80: { const v = pop(), t = String(v); if (o.length + t.length > 65536) throw 11; for (let k = 0; k < t.length; k++) o.push(t.charCodeAt(k)); break; }
-        case 81: { const v = pop(); if (o.length > 65535) throw 11; o.push(v & 255); break; }
+        case 80: { const v = pop(), t = String(v); if (ol + t.length > 65536) throw 11; ob.write(t, ol, 'ascii'); ol += t.length; break; }
+        case 81: { const v = pop(); if (ol > 65535) throw 11; ob[ol++] = v & 255; break; }
         case 82: push(ip < q.length ? q[ip++] : -1); break;
-        case 83: return [Buffer.from(o), pop() & 255];
+        case 83: return [ob.subarray(0, ol), pop() & 255];
+        default: throw 5;
       }
     }
   } catch (x) {
     if (typeof x !== 'number') throw x;
-    return [Buffer.from(o), x];
+    return [ob.subarray(0, ol), x];
   }
 }
 
